@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>사분할 검출기 위치 감지 시뮬레이터 (오프셋 스캔)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.26.0/plotly.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+        label {
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        input[type="range"] {
+            width: 100%;
+            margin: 5px 0;
+        }
+        .value-display {
+            text-align: center;
+            color: #764ba2;
+            font-weight: bold;
+            font-size: 16px;
+            margin-top: 5px;
+        }
+        .plots-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .plot {
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .plot-single {
+            grid-column: 1 / -1;
+        }
+        .info-panel {
+            background: #f0f7ff;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+        .info-panel h3 {
+            margin-top: 0;
+            color: #667eea;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: scale(1.05);
+        }
+        .animation-controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>2D 사분할 검출기 위치 감지 시뮬레이터</h1>
+        <div class="subtitle">오프셋 및 각도를 적용한 가우시안 빔 스캔 분석</div>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label>W/D 비율</label>
+                <input type="range" id="wdRatio" min="0.1" max="2.0" step="0.05" value="0.5">
+                <div class="value-display" id="wdValue">0.50</div>
+            </div>
+            <div class="control-group">
+                <label>X 오프셋 (단위: R)</label>
+                <input type="range" id="xOffset" min="-2" max="2" step="0.01" value="0">
+                <div class="value-display" id="xOffsetValue">0.00</div>
+            </div>
+            <div class="control-group">
+                <label>Y 오프셋 (단위: R)</label>
+                <input type="range" id="yOffset" min="-2" max="2" step="0.01" value="0">
+                <div class="value-display" id="yOffsetValue">0.00</div>
+            </div>
+             <div class="control-group">
+                <label>스캔 각도</label>
+                <input type="range" id="scanAngle" min="-90" max="90" step="1" value="0">
+                <div class="value-display" id="angleValue">0 °</div>
+            </div>
+            <div class="control-group">
+                <label>스캔 거리 (단위: R)</label>
+                <input type="range" id="scanDistance" min="-2" max="2" step="0.01" value="0">
+                <div class="value-display" id="scanDistValue">0.00</div>
+            </div>
+            <div class="control-group">
+                <label>검출기 직경 D (mm)</label>
+                <input type="range" id="detectorSize" min="1" max="5" step="0.1" value="2">
+                <div class="value-display" id="detectorValue">2.0</div>
+            </div>
+        </div>
+
+        <div class="animation-controls">
+            <button onclick="animateBeam()">각도 스캔 애니메이션</button>
+            <button onclick="compareRatios()">W/D 비율 비교 (중심, 0° 스캔)</button>
+        </div>
+
+        <div class="plots-container">
+            <div id="beamPlot" class="plot"></div>
+            <div id="responsePlot" class="plot"></div>
+            <div id="comparisonPlot" class="plot plot-single"></div>
+        </div>
+
+        <div class="info-panel">
+            <h3>현재 측정값</h3>
+            <div id="measurements"></div>
+        </div>
+    </div>
+
+    <script>
+        let animationId = null;
+
+        // Calculate Gaussian beam intensity
+        function gaussianIntensity(x, y, x0, y0, w) {
+            return Math.exp(-2 * ((x - x0)**2 + (y - y0)**2) / (w**2));
+        }
+
+        // Calculate intensity in each quadrant
+        function calculateQuadrantIntensities(x0, y0, w, D) {
+            const R = D / 2;
+            // Return zero if beam center is too far away to optimize
+            if (Math.sqrt(x0**2 + y0**2) > 3 * R + w) {
+                 return {A: 0, B: 0, C: 0, D: 0};
+            }
+            const steps = 100;
+            const dr = R / steps;
+            const dtheta = 2 * Math.PI / (4 * steps);
+            
+            let intensities = {A: 0, B: 0, C: 0, D: 0};
+            
+            for (let r = 0; r < R; r += dr) {
+                for (let theta = 0; theta < 2 * Math.PI; theta += dtheta) {
+                    const x = r * Math.cos(theta);
+                    const y = r * Math.sin(theta);
+                    const I = gaussianIntensity(x, y, x0, y0, w) * r * dr * dtheta;
+                    
+                    if (x > 0 && y > 0) intensities.A += I;
+                    else if (x < 0 && y > 0) intensities.B += I;
+                    else if (x < 0 && y < 0) intensities.C += I;
+                    else if (x > 0 && y < 0) intensities.D += I;
+                }
+            }
+            return intensities;
+        }
+
+        // Calculate Ex position signal
+        function calculateEx(intensities) {
+            const total = intensities.A + intensities.B + intensities.C + intensities.D;
+            if (total < 1e-9) return 0;
+            return ((intensities.A + intensities.D) - (intensities.B + intensities.C)) / total;
+        }
+        
+        // Calculate Ey position signal
+        function calculateEy(intensities) {
+            const total = intensities.A + intensities.B + intensities.C + intensities.D;
+            if (total < 1e-9) return 0;
+            return ((intensities.A + intensities.B) - (intensities.C + intensities.D)) / total;
+        }
+
+        // Update beam visualization
+        function updateBeamPlot(x0, y0, w, D, scanAngle, xOffset, yOffset) {
+            const R = D / 2;
+            const gridSize = 100;
+            const range = R * 2.5;
+            
+            let x = [], y = [], z = [], maxIntensity = 1e-9;
+            
+            for (let i = 0; i < gridSize; i++) {
+                let row_z = [];
+                for (let j = 0; j < gridSize; j++) {
+                    const xi = -range + (2 * range * j / gridSize);
+                    const yi = -range + (2 * range * i / gridSize);
+                    if (i === 0) x.push(xi);
+                    if (j === 0) y.push(yi);
+                    const intensity = gaussianIntensity(xi, yi, x0, y0, w);
+                    row_z.push(intensity);
+                    maxIntensity = Math.max(maxIntensity, intensity);
+                }
+                z.push(row_z);
+            }
+            
+            for (let i = 0; i < gridSize; i++) {
+                for (let j = 0; j < gridSize; j++) {
+                    z[i][j] /= maxIntensity;
+                }
+            }
+            
+            const angleRad = scanAngle * Math.PI / 180;
+            const xOffset_mm = xOffset * R;
+            const yOffset_mm = yOffset * R;
+            const x_line_end = range * Math.cos(angleRad);
+            const y_line_end = range * Math.sin(angleRad);
+
+            const shapes = [
+                {type: 'circle', x0: -R, y0: -R, x1: R, y1: R, line: {color: 'white', width: 3}, fillcolor: 'rgba(0,0,0,0)'},
+                {type: 'line', x0: -R, y0: 0, x1: R, y1: 0, line: {color: 'white', width: 2, dash: 'dash'}},
+                {type: 'line', x0: 0, y0: -R, x1: 0, y1: R, line: {color: 'white', width: 2, dash: 'dash'}},
+                {
+                    type: 'line', 
+                    x0: -x_line_end + xOffset_mm, y0: -y_line_end + yOffset_mm, 
+                    x1: x_line_end + xOffset_mm,  y1: y_line_end + yOffset_mm, 
+                    line: {color: 'yellow', width: 2, dash: 'dot'}
+                },
+                {type: 'circle', x0: x0 - w/10, y0: y0 - w/10, x1: x0 + w/10, y1: y0 + w/10, line: {color: 'cyan', width: 2}, fillcolor: 'rgba(0,255,255,0.3)'}
+            ];
+            
+            const annotations = [
+                {x: R/2, y: R/2, text: 'A', showarrow: false, font: {size: 18, color: 'white', family: 'Arial Black'}},
+                {x: -R/2, y: R/2, text: 'B', showarrow: false, font: {size: 18, color: 'white', family: 'Arial Black'}},
+                {x: -R/2, y: -R/2, text: 'C', showarrow: false, font: {size: 18, color: 'white', family: 'Arial Black'}},
+                {x: R/2, y: -R/2, text: 'D', showarrow: false, font: {size: 18, color: 'white', family: 'Arial Black'}},
+                {x: 0, y: -range * 1.1, text: `빔 중심: (${x0.toFixed(2)}, ${y0.toFixed(2)}) mm`, showarrow: false, font: {size: 12, color: 'white'}, xanchor: 'center'}
+            ];
+            
+            const data = [{
+                type: 'heatmap', x: x, y: y, z: z,
+                colorscale: 'Viridis',
+                showscale: true, colorbar: {title: '정규화된<br>강도', titleside: 'right', thickness: 20},
+                zmin: 0, zmax: 1
+            }];
+            
+            const layout = {
+                title: '사분할 검출기 위 가우시안 빔',
+                xaxis: {title: 'X (mm)', zeroline: false, scaleanchor: 'y', showgrid: false, color: 'white'},
+                yaxis: {title: 'Y (mm)', zeroline: false, showgrid: false, color: 'white'},
+                shapes: shapes, annotations: annotations, height: 400,
+                margin: {t: 50, b: 50}, paper_bgcolor: 'rgb(30,30,30)', plot_bgcolor: 'rgb(0,0,0)'
+            };
+            
+            Plotly.newPlot('beamPlot', data, layout);
+        }
+
+        // Update response curve for Ex and Ey along the angled scan line
+        function updateResponsePlot(wdRatio, D, scanAngle, xOffset, yOffset, currentScanDist) {
+            const R = D / 2;
+            const w = wdRatio * D;
+            const positions = [], exValues = [], eyValues = [];
+            const angleRad = scanAngle * Math.PI / 180;
+            const xOffset_mm = xOffset * R;
+            const yOffset_mm = yOffset * R;
+            
+            const steps = 100;
+            for (let i = 0; i <= steps; i++) {
+                const dist_norm = -2 + (4 * i / steps);
+                positions.push(dist_norm);
+                
+                const dist_mm = dist_norm * R;
+                const x = (dist_mm * Math.cos(angleRad)) + xOffset_mm;
+                const y = (dist_mm * Math.sin(angleRad)) + yOffset_mm;
+                
+                const intensities = calculateQuadrantIntensities(x, y, w, D);
+                exValues.push(calculateEx(intensities));
+                eyValues.push(calculateEy(intensities));
+            }
+            
+            const traceEx = {
+                x: positions, y: exValues, type: 'scatter', mode: 'lines', name: 'Ex Signal', 
+                line: {color: '#1f77b4', width: 3} // Blue
+            };
+
+            const traceEy = {
+                x: positions, y: eyValues, type: 'scatter', mode: 'lines', name: 'Ey Signal',
+                line: {color: '#ff7f0e', width: 3} // Orange
+            };
+            
+            const layout = {
+                title: `응답 곡선 (각도: ${scanAngle}°, 오프셋: ${xOffset},${yOffset})`,
+                xaxis: {title: '정규화된 스캔 거리 (d/R)', zeroline: true, range: [-2.1, 2.1]},
+                yaxis: {title: '신호 (Ex, Ey)', zeroline: true, range: [-1.05, 1.05]},
+                height: 400, margin: {t: 50, b: 50}, showlegend: true,
+                shapes: [{
+                    type: 'line', x0: currentScanDist, y0: -1.05, x1: currentScanDist, y1: 1.05,
+                    line: { color: 'red', width: 2, dash: 'dash' }
+                }]
+            };
+            
+            Plotly.newPlot('responsePlot', [traceEx, traceEy], layout);
+        }
+
+        function compareRatios() {
+            // This function compares W/D ratios for a central, 0-degree scan
+            const D = parseFloat(document.getElementById('detectorSize').value);
+            const R = D / 2;
+            const ratios = [0.2, 0.5, 0.8, 1.0, 1.5, 2.0];
+            let traces = [];
+            ratios.forEach((ratio) => {
+                const w = ratio * D;
+                const positions = [], exValues = [];
+                const steps = 100;
+                for (let i = 0; i <= steps; i++) {
+                    const x_norm = -2 + (4 * i / steps);
+                    positions.push(x_norm);
+                    const intensities = calculateQuadrantIntensities(x_norm * R, 0, w, D);
+                    exValues.push(calculateEx(intensities));
+                }
+                traces.push({
+                    x: positions, y: exValues, type: 'scatter', mode: 'lines',
+                    name: `W/D = ${ratio.toFixed(1)}`
+                });
+            });
+            const layout = {
+                title: 'W/D 비율에 따른 Ex 응답 곡선 비교 (중심, 0° 스캔)',
+                xaxis: {title: '정규화된 위치 (x/R)', zeroline: true, range: [-2.1, 2.1]},
+                yaxis: {title: 'E<sub>x</sub> 신호', zeroline: true, range: [-1.05, 1.05]},
+                height: 400, margin: {t: 50, b: 70}, showlegend: true, legend: {orientation: 'h', y: -0.2}
+            };
+            Plotly.newPlot('comparisonPlot', traces, layout);
+        }
+
+        function animateBeam() {
+            if (animationId) {
+                clearInterval(animationId);
+                animationId = null;
+                return;
+            }
+            let dist_norm = -2;
+            const step = 0.04;
+            animationId = setInterval(() => {
+                dist_norm += step;
+                if (dist_norm > 2) dist_norm = -2;
+                document.getElementById('scanDistance').value = dist_norm;
+                document.getElementById('scanDistValue').textContent = dist_norm.toFixed(2);
+                updateAll();
+            }, 50);
+        }
+
+        function updateMeasurements(intensities, Ex, Ey, w, D) {
+            const total = intensities.A + intensities.B + intensities.C + intensities.D;
+            const html = `
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                    <div><strong>I_A:</strong> ${intensities.A.toFixed(4)}</div>
+                    <div><strong>I_B:</strong> ${intensities.B.toFixed(4)}</div>
+                    <div><strong>I_C:</strong> ${intensities.C.toFixed(4)}</div>
+                    <div><strong>I_D:</strong> ${intensities.D.toFixed(4)}</div>
+                    <div><strong>Total:</strong> ${total.toFixed(4)}</div>
+                    <div><strong>E_x:</strong> ${Ex.toFixed(4)}</div>
+                    <div><strong>E_y:</strong> ${Ey.toFixed(4)}</div>
+                    <div><strong>빔 폭 W:</strong> ${w.toFixed(2)} mm</div>
+                </div>
+            `;
+            document.getElementById('measurements').innerHTML = html;
+        }
+
+        function updateAll() {
+            const wdRatio = parseFloat(document.getElementById('wdRatio').value);
+            const xOffset = parseFloat(document.getElementById('xOffset').value);
+            const yOffset = parseFloat(document.getElementById('yOffset').value);
+            const scanAngle = parseFloat(document.getElementById('scanAngle').value);
+            const scanDist = parseFloat(document.getElementById('scanDistance').value);
+            const D = parseFloat(document.getElementById('detectorSize').value);
+            
+            const R = D / 2;
+            const w = wdRatio * D;
+
+            const angleRad = scanAngle * Math.PI / 180;
+            const xOffset_mm = xOffset * R;
+            const yOffset_mm = yOffset * R;
+            const dist_mm = scanDist * R;
+            
+            const x0 = (dist_mm * Math.cos(angleRad)) + xOffset_mm;
+            const y0 = (dist_mm * Math.sin(angleRad)) + yOffset_mm;
+            
+            const intensities = calculateQuadrantIntensities(x0, y0, w, D);
+            const Ex = calculateEx(intensities);
+            const Ey = calculateEy(intensities);
+            
+            updateBeamPlot(x0, y0, w, D, scanAngle, xOffset, yOffset);
+            updateResponsePlot(wdRatio, D, scanAngle, xOffset, yOffset, scanDist);
+            updateMeasurements(intensities, Ex, Ey, w, D);
+        }
+
+        // Event listeners setup
+        function setupEventListeners() {
+            document.getElementById('wdRatio').addEventListener('input', (e) => {
+                document.getElementById('wdValue').textContent = parseFloat(e.target.value).toFixed(2);
+                updateAll();
+            });
+            document.getElementById('xOffset').addEventListener('input', (e) => {
+                document.getElementById('xOffsetValue').textContent = parseFloat(e.target.value).toFixed(2);
+                updateAll();
+            });
+            document.getElementById('yOffset').addEventListener('input', (e) => {
+                document.getElementById('yOffsetValue').textContent = parseFloat(e.target.value).toFixed(2);
+                updateAll();
+            });
+            document.getElementById('scanAngle').addEventListener('input', (e) => {
+                document.getElementById('angleValue').textContent = e.target.value + ' °';
+                updateAll();
+            });
+            document.getElementById('scanDistance').addEventListener('input', (e) => {
+                document.getElementById('scanDistValue').textContent = parseFloat(e.target.value).toFixed(2);
+                updateAll();
+            });
+            document.getElementById('detectorSize').addEventListener('input', (e) => {
+                document.getElementById('detectorValue').textContent = parseFloat(e.target.value).toFixed(1);
+                updateAll();
+            });
+        }
+
+        // Initial load
+        setupEventListeners();
+        updateAll();
+        compareRatios();
+    </script>
+</body>
+</html>
+
